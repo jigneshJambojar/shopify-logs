@@ -36,6 +36,54 @@ app.get('/api/track/get', async (req, res) => {
   }
 })
 
+app.post('/api/script', async (req, res) => {
+  try {
+    const { session, scriptUrl } = req.body;
+
+    const client = new Shopify.Clients.Rest(session.shop, session.accessToken);
+
+    // Step 1: Get the active theme
+    const themes = await client.get({ path: 'themes' });
+    const mainTheme = themes.body.themes.find(theme => theme.role === 'main');
+
+    if (!mainTheme) {
+      res.sendStatus(200).message(false);
+      return;
+    }
+    // Step 2: Get the theme.liquid file
+    const themeAsset = await client.get({
+      path: `themes/${mainTheme.id}/assets`,
+      query: { 'asset[key]': 'layout/theme.liquid' },
+    });
+
+    const content = themeAsset.body.asset.value;
+
+    // Step 3: Add the script tag
+    const updatedContent = content.replace(
+      '</body>',
+      `<script src="${scriptUrl}"></script>\n</body>`
+    );
+
+    // Step 4: Update the theme file
+    await client.put({
+      path: `themes/${mainTheme.id}/assets`,
+      data: {
+        asset: {
+          key: 'layout/theme.liquid',
+          value: updatedContent,
+        },
+      },
+    });
+    console.log('Script added successfully!');
+    res.sendStatus(200).message({ status: true });
+    return;
+  } catch (err) {
+    console.log(err, '>>>>>>>>>>>>>>>>>>>>>>>>>>>');
+    res.sendStatus(200).message({ status: false });
+    return;
+  }
+})
+
 app.listen(PORT, async () => {
   console.log(`APP IS LISTEN ON ${PORT}`);
 })
