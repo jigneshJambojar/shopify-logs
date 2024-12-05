@@ -249,7 +249,7 @@ app.post('/api/set-cookies-data', async (req, res) => {
 app.post('/api/save-orders', async (req, res) => {
   try {
     const data = req.body; // Get the request body
-    const { shop, order_id, order_url, cart_token, payment_status, billing_status, billing_amount } = data; // Destructure the fields
+    const { shop, order_id, order_url, cart_token, payment_status, billing_status, billing_amount, app_credit_amount } = data; // Destructure the fields
 
     // Validate required fields
     if (!shop || !order_id) {
@@ -278,6 +278,7 @@ app.post('/api/save-orders', async (req, res) => {
         if (payment_status) updateFields["orders.$.payment_status"] = payment_status;
         if (billing_status) updateFields["orders.$.billing_status"] = billing_status;
         if (billing_amount) updateFields["orders.$.billing_amount"] = billing_amount;
+        if (app_credit_amount) updateFields["orders.$.app_credit_amount"] = app_credit_amount;
         updateFields["orders.$.updated_at"] = currentTimestamp;
 
         // Update the order in the array
@@ -298,6 +299,7 @@ app.post('/api/save-orders', async (req, res) => {
                 payment_status: payment_status || null,
                 billing_status: billing_status || null,
                 billing_amount: billing_amount || null,
+                app_credit_amount: app_credit_amount || null,
                 created_at: currentTimestamp,
                 updated_at: currentTimestamp
               }
@@ -317,6 +319,7 @@ app.post('/api/save-orders', async (req, res) => {
             payment_status: payment_status || null,
             billing_status: billing_status || null,
             billing_amount: billing_amount || null,
+            app_credit_amount: app_credit_amount || null,
             created_at: currentTimestamp,
             updated_at: currentTimestamp
           }
@@ -349,18 +352,25 @@ app.post('/api/get-cart-token', async (req, res) => {
     const db = await connectDB();
     const collection = db.collection(process.env.JAMBOJAR_ORDERS);
 
-    // Convert order_id to number for matching in the database
-    const orderIdNumber = Number(order_id);  // Convert to number for matching
+    // Convert order_id to both string and number
+    const orderIdNumber = Number(order_id);
+    const orderIdString = String(order_id);
 
-    // Query for the order, treating order_id as a number
+    // Query for the order, checking both number and string types
     const order = await collection.findOne({
       shop: { $regex: normalizedShop, $options: 'i' },
-      "orders.order_id": orderIdNumber  // Match order_id as a number
+      $or: [
+        { "orders.order_id": orderIdNumber }, // Match order_id as number
+        { "orders.order_id": orderIdString } // Match order_id as string
+      ]
     });
 
     if (order) {
-      // Find the order in the orders array that matches the order_id (as number)
-      const foundOrder = order.orders.find(o => o.order_id === orderIdNumber);
+      // Find the order in the orders array that matches the order_id (as string or number)
+      const foundOrder = order.orders.find(
+        o => o.order_id === orderIdNumber || o.order_id === orderIdString
+      );
+
       if (foundOrder && foundOrder.cart_token) {
         return res.status(200).json({
           status: 200,
