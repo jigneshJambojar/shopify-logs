@@ -249,7 +249,7 @@ app.post('/api/set-cookies-data', async (req, res) => {
 app.post('/api/save-orders', async (req, res) => {
   try {
     const data = req.body; // Get the request body
-    const { shop, order_id, order_url, cart_token, payment_status, billing_status, billing_amount } = data; // Destructure the fields
+    const { shop, order_id, order_url, cart_token, payment_status, billing_status, billing_amount, app_credit_amount } = data; // Destructure the fields
 
     // Validate required fields
     if (!shop || !order_id) {
@@ -278,6 +278,7 @@ app.post('/api/save-orders', async (req, res) => {
         if (payment_status) updateFields["orders.$.payment_status"] = payment_status;
         if (billing_status) updateFields["orders.$.billing_status"] = billing_status;
         if (billing_amount) updateFields["orders.$.billing_amount"] = billing_amount;
+        if (app_credit_amount) updateFields["orders.$.app_credit_amount"] = app_credit_amount;
         updateFields["orders.$.updated_at"] = currentTimestamp;
 
         // Update the order in the array
@@ -298,6 +299,7 @@ app.post('/api/save-orders', async (req, res) => {
                 payment_status: payment_status || null,
                 billing_status: billing_status || null,
                 billing_amount: billing_amount || null,
+                app_credit_amount: app_credit_amount || null,
                 created_at: currentTimestamp,
                 updated_at: currentTimestamp
               }
@@ -317,6 +319,7 @@ app.post('/api/save-orders', async (req, res) => {
             payment_status: payment_status || null,
             billing_status: billing_status || null,
             billing_amount: billing_amount || null,
+            app_credit_amount: app_credit_amount || null,
             created_at: currentTimestamp,
             updated_at: currentTimestamp
           }
