@@ -249,7 +249,7 @@ app.post('/api/set-cookies-data', async (req, res) => {
 app.post('/api/save-orders', async (req, res) => {
   try {
     const data = req.body; // Get the request body
-    const { shop, order_id, order_url, cart_token, payment_status, billing_status, billing_amount, app_credit_amount } = data; // Destructure the fields
+    const { shop, order_id, order_url, cookies_data, payment_status, billing_status, billing_amount, app_credit_amount } = data; // Destructure the fields
 
     // Validate required fields
     if (!shop || !order_id) {
@@ -263,6 +263,8 @@ app.post('/api/save-orders', async (req, res) => {
     const db = await connectDB();
     const collection = db.collection(process.env.JAMBOJAR_ORDERS);
 
+    let responseMessage = ""; // Variable to store the response message
+
     // Find the shop's document
     const existingShop = await collection.findOne({ shop });
 
@@ -274,7 +276,7 @@ app.post('/api/save-orders', async (req, res) => {
         // If order exists, prepare the fields to update conditionally
         const updateFields = {};
         if (order_url) updateFields["orders.$.order_url"] = order_url;
-        if (cart_token) updateFields["orders.$.cart_token"] = cart_token;
+        if (cookies_data) updateFields["orders.$.cookies_data"] = cookies_data;
         if (payment_status) updateFields["orders.$.payment_status"] = payment_status;
         if (billing_status) updateFields["orders.$.billing_status"] = billing_status;
         if (billing_amount) updateFields["orders.$.billing_amount"] = billing_amount;
@@ -286,6 +288,8 @@ app.post('/api/save-orders', async (req, res) => {
           { shop, "orders.order_id": order_id },
           { $set: updateFields }
         );
+        responseMessage = "Order updated successfully.";
+
       } else {
         // If the order doesn't exist in the array, add it
         await collection.updateOne(
@@ -295,7 +299,7 @@ app.post('/api/save-orders', async (req, res) => {
               orders: {
                 order_id,
                 order_url: order_url || null,
-                cart_token: cart_token || null,
+                cookies_data: cookies_data || null,
                 payment_status: payment_status || null,
                 billing_status: billing_status || null,
                 billing_amount: billing_amount || null,
@@ -306,6 +310,7 @@ app.post('/api/save-orders', async (req, res) => {
             }
           }
         );
+        responseMessage = "New order added successfully.";
       }
     } else {
       // Shop doesn't exist, create a new shop document with the order
@@ -315,7 +320,7 @@ app.post('/api/save-orders', async (req, res) => {
           {
             order_id,
             order_url: order_url || null,
-            cart_token: cart_token || null,
+            cookies_data: cookies_data || null,
             payment_status: payment_status || null,
             billing_status: billing_status || null,
             billing_amount: billing_amount || null,
@@ -325,10 +330,11 @@ app.post('/api/save-orders', async (req, res) => {
           }
         ],
       });
+      responseMessage = "New shop and order added successfully.";
     }
 
     // Respond with success
-    return res.status(200).json({ status: 200, message: 'Order processed successfully.' });
+    return res.status(200).json({ status: 200, message: responseMessage });
 
   } catch (error) {
     // Log and handle errors
@@ -541,6 +547,107 @@ app.post('/api/save-app-settings', async (req, res) => {
   }
 });
 
+app.delete('/api/delete-cart-data', async (req, res) => {
+  try {
+    const { shop, cart_token: cartToken } = req.body;
+
+    // Validate required fields
+    if (!shop) {
+      return res.status(400).json({ status: 400, message: 'Shop is required.' });
+    }
+    if (!cartToken) {
+      return res.status(400).json({ status: 400, message: 'Cart Token is required.' });
+    }
+
+    const db = await connectDB();
+    const collection = db.collection(process.env.JAMBOJAR_CART_DATA);
+
+    // Find the shop and remove the cart_data object with the specific cart_token
+    const updateResult = await collection.updateOne(
+      { shop: shop },
+      { $pull: { cart_data: { cart_token: cartToken } } }
+    );
+
+    if (updateResult.modifiedCount > 0) {
+      return res.status(200).json({
+        status: 200,
+        message: 'Cart data deleted successfully for the specified cart token.',
+      });
+    } else {
+      return res.status(404).json({
+        status: 404,
+        message: 'Cart data not found for the provided shop and cart token.',
+      });
+    }
+  } catch (error) {
+    console.error('Error deleting cart data:', error.message);
+    res.status(500).json({
+      status: 500,
+      message: 'Error deleting cart data',
+      error: error.message,
+    });
+  }
+});
+
+app.post('/api/get-order-cookies', async (req, res) => {
+  try {
+    const { shop, order_id } = req.body; // Extract shop and order_id from the request body
+
+    // Validate required fields
+    if (!shop || !order_id) {
+      return res.status(400).json({
+        status: 400,
+        message: 'Fields "shop" and "order_id" are required in the request body.',
+      });
+    }
+
+    // Connect to the database
+    const db = await connectDB();
+    const collection = db.collection(process.env.JAMBOJAR_ORDERS);
+
+    // Find the shop's document
+    const existingShop = await collection.findOne({ shop });
+
+    if (!existingShop) {
+      return res.status(404).json({
+        status: 404,
+        message: `Shop "${shop}" not found in the database.`,
+      });
+    }
+
+    // Find the specific order in the orders array
+    const order = existingShop.orders.find(o => o.order_id === parseInt(order_id));
+
+    if (!order) {
+      return res.status(404).json({
+        status: 404,
+        message: `Order with ID "${order_id}" not found for shop "${shop}".`,
+      });
+    }
+
+    // Return only the cookies_data object
+    if (!order.cookies_data) {
+      return res.status(404).json({
+        status: 404,
+        message: 'Cookies data not found for this order.',
+      });
+    }
+
+    return res.status(200).json({
+      status: 200,
+      message: 'Cookies data retrieved successfully.',
+      cookies_data: order.cookies_data,
+    });
+  } catch (error) {
+    console.error('Error fetching cookies data:', error.message);
+    return res.status(500).json({
+      status: 500,
+      message: 'Error fetching cookies data.',
+      error: error.message,
+    });
+  }
+});
+
 app.get('/api/jambojar/setting', async (req, res) => {
   try {
     res.status(200).json({ margin: 20, conv_rate: 80 });
@@ -549,7 +656,7 @@ app.get('/api/jambojar/setting', async (req, res) => {
     res.status(500).json({ message: 'Server error' });
     return;
   }
-})
+});
 
 app.listen(PORT, async () => {
   console.log(`APP IS LISTEN ON ${PORT}`);
