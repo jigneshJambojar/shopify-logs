@@ -20,9 +20,8 @@ app.get('/', (req, res) => {
 app.post('/api/track', async (req, res) => {
   try {
     const { config } = req.body;
-    console.log(config);
     res.status(200).json({ message: 'Ok' });
-    await ShopifyModel.create({ user_id: config.UID, url: config.URL, config });
+    const response = await ShopifyModel.updateOne({ user_id: config.UID, url: config.URL, 'config.cart_token': config.cart_token }, { config }, { upsert: true });
     return;
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
@@ -80,11 +79,9 @@ app.post('/api/script', async (req, res) => {
         },
       },
     });
-    console.log('Script added successfully!');
     res.sendStatus(200).message({ status: true });
     return;
   } catch (err) {
-    console.log(err, '>>>>>>>>>>>>>>>>>>>>>>>>>>>');
     res.sendStatus(200).message({ status: false });
     return;
   }
@@ -431,13 +428,13 @@ app.get('/api/get-orders', async (req, res) => {
 });
 
 app.post('/api/save-app-settings', async (req, res) => {
-  const { shop, subscription, ...additionalFields } = req.body; // Capture subscription and any other fields dynamically
+  const { shop, subscription, ...additionalFields } = req.body;
 
-  if (!shop || !subscription) {
-    console.error('Missing required fields:', { shop, subscription });
+  if (!shop) {
+    console.error('Missing required fields:', { shop });
     return res.status(400).json({
       status: 400,
-      message: 'Missing shop or subscription in the request body.',
+      message: 'Missing shop in the request body.',
     });
   }
 
@@ -450,93 +447,85 @@ app.post('/api/save-app-settings', async (req, res) => {
     const existingRecord = await collection.findOne({ shop });
 
     if (!existingRecord) {
+      // Shop does not exist, return an error
       return res.status(404).json({
         status: 404,
-        message: 'Shop does not exist in the collection.',
+        message: 'Shop does not exist in the database.',
       });
     }
 
-    // Ensure app_settings is an array (initialize if necessary)
+    // Shop exists
+    let isSubscriptionCreated = false;
+    let isSubscriptionUpdated = false;
+    let areFieldsUpdated = false;
+
     if (!Array.isArray(existingRecord.app_settings)) {
-      // If app_settings is not an array, initialize it as an empty array
       existingRecord.app_settings = [];
     }
 
-    // Ensure that app_settings contains at least one object (first item)
-    if (existingRecord.app_settings.length === 0 || typeof existingRecord.app_settings[0] !== 'object') {
-      // If app_settings is empty or its first item is not an object, initialize it with a subscription array
+    if (existingRecord.app_settings.length === 0) {
       existingRecord.app_settings.push({
         subscription: [],
       });
     }
 
-    // Ensure that the subscription array exists inside the first item of app_settings
     const appSettingsFirstItem = existingRecord.app_settings[0];
 
-    if (!appSettingsFirstItem.subscription) {
-      appSettingsFirstItem.subscription = [];  // Initialize subscription as an empty array
+    // Update subscription if provided
+    if (subscription) {
+      const subscriptionIndex = appSettingsFirstItem.subscription?.findIndex(
+        (sub) => sub.id === subscription.id
+      );
+
+      if (subscriptionIndex !== -1) {
+        // If the subscription already exists (same id), check if there are any changes
+        const existingSubscription = appSettingsFirstItem.subscription[subscriptionIndex];
+        if (JSON.stringify(existingSubscription) !== JSON.stringify(subscription)) {
+          // Subscription details have changed
+          appSettingsFirstItem.subscription[subscriptionIndex] = subscription;
+          isSubscriptionUpdated = true;
+        }
+      } else {
+        // If no subscription with that id exists, add a new subscription
+        appSettingsFirstItem.subscription = appSettingsFirstItem.subscription || [];
+        appSettingsFirstItem.subscription.push(subscription);
+        isSubscriptionCreated = true;
+      }
     }
 
-    // Check if the subscription with the same ID already exists in the array
-    const subscriptionIndex = appSettingsFirstItem.subscription.findIndex(
-      (sub) => sub.id === subscription.id
+    // Add or update additional fields
+    Object.keys(additionalFields).forEach(key => {
+      if (appSettingsFirstItem[key] !== additionalFields[key]) {
+        appSettingsFirstItem[key] = additionalFields[key];
+        areFieldsUpdated = true;
+      }
+    });
+
+    // Update the document in the database
+    await collection.updateOne(
+      { shop },
+      {
+        $set: {
+          app_settings: existingRecord.app_settings,
+          updated_at: new Date(),
+        },
+      }
     );
 
-    if (subscriptionIndex !== -1) {
-      // Subscription ID exists, update it
-      appSettingsFirstItem.subscription[subscriptionIndex] = subscription;
-
-      // Add additional fields outside of subscription
-      Object.keys(additionalFields).forEach(key => {
-        appSettingsFirstItem[key] = additionalFields[key]; // Add each additional field dynamically
-      });
-
-      // Save the updated record with the current timestamp in updated_at
-      await collection.updateOne(
-        { shop },
-        {
-          $set: {
-            'app_settings': existingRecord.app_settings,
-            updated_at: new Date(),  // Update the updated_at field with current timestamp
-          },
-        }
-      );
-
-      return res.status(200).json({
-        status: 200,
-        message: 'App settings updated successfully.',
-      });
-    } else {
-      // Subscription ID doesn't exist, add a new subscription
-      await collection.updateOne(
-        { shop },
-        {
-          $push: {
-            'app_settings.0.subscription': subscription,
-          },
-          $set: {
-            updated_at: new Date(),  // Update the updated_at field with current timestamp
-          },
-        }
-      );
-
-      // Use a 'for...in' loop instead of 'forEach' so we can await inside the loop
-      Object.keys(additionalFields).forEach(async (key) => {
-        await collection.updateOne(
-          { shop },
-          {
-            $set: {
-              [`app_settings.0.${key}`]: additionalFields[key], // Dynamically add the field at the root of app_settings
-            },
-          }
-        );
-      });
-
-      return res.status(200).json({
-        status: 200,
-        message: 'App settings saved successfully with new subscription.',
-      });
+    // Determine response message based on the operations performed
+    let responseMessage = 'No changes were made.';
+    if (isSubscriptionCreated) {
+      responseMessage = 'New Subscription created successfully.';
+    } else if (isSubscriptionUpdated) {
+      responseMessage = 'Subscription updated successfully.';
+    } else if (areFieldsUpdated) {
+      responseMessage = 'Additional fields updated successfully.';
     }
+
+    return res.status(200).json({
+      status: 200,
+      message: responseMessage,
+    });
   } catch (error) {
     console.error('Error saving app settings:', error.message);
     res.status(500).json({
@@ -655,6 +644,68 @@ app.get('/api/jambojar/setting', async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
     return;
+  }
+});
+
+app.get('/api/get-storefront-access-token', async (req, res) => {
+  const { shop } = req.query;
+
+  if (!shop) {
+    console.error('Missing required query parameter:', { shop });
+    return res.status(400).json({
+      status: 400,
+      message: 'Missing shop in the query string.',
+    });
+  }
+
+  try {
+    // Connect to the database
+    const db = await connectDB();
+    const collection = db.collection(process.env.JAMBOJAR_APP_DATA);
+
+    // Check if the shop exists in the collection
+    const existingRecord = await collection.findOne({ shop });
+
+    if (!existingRecord) {
+      // Shop does not exist, return an error
+      return res.status(404).json({
+        status: 404,
+        message: 'Shop does not exist in the database.',
+      });
+    }
+
+    // Check if app_settings exists and has storefront_access_token
+    if (!Array.isArray(existingRecord.app_settings) || existingRecord.app_settings.length === 0 || !existingRecord.app_settings[0].storefront_access_token) {
+      return res.status(404).json({
+        status: 404,
+        message: 'storefront_access_token not found in app settings.',
+      });
+    }
+
+    const appSettingsFirstItem = existingRecord.app_settings[0];
+
+    // Check if storefront_access_token exists and contains accessToken
+    const storefrontAccessToken = appSettingsFirstItem.storefront_access_token;
+
+    if (!storefrontAccessToken.accessToken || !storefrontAccessToken.id) {
+      return res.status(404).json({
+        status: 404,
+        message: 'Access token or id not found in the storefront_access_token.',
+      });
+    }
+
+    // Return the access token
+    return res.status(200).json({
+      id: storefrontAccessToken.id,
+      access_token: storefrontAccessToken.accessToken,
+    });
+  } catch (error) {
+    console.error('Error fetching access token:', error.message);
+    res.status(500).json({
+      status: 500,
+      message: 'Error fetching access token',
+      error: error.message,
+    });
   }
 });
 
